@@ -9,7 +9,7 @@ on:
 
 jobs:
   matrix-smoke:
-    name: Smoke (${{ matrix.os }} · {{ matrix.browser }})
+    name: Smoke (${{ matrix.os }} · ${{ matrix.browser }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
