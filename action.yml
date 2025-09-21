@@ -11,9 +11,9 @@ inputs:
     required: false
     default: "latest"
   browsers:
-    description: "List of browsers to install. Allowed: chrome, chromium, firefox, webkit, msedge, all. Accepts comma/space/newline-separated."
+    description: 'Browsers to install as a JSON array (e.g., ["chrome","firefox"]) or "all". Allowed: chrome, chromium, firefox, webkit, msedge.'
     required: false
-    default: "chrome"
+    default: '["chrome"]'
   browsers-path:
     description: "Optional custom directory to store browser binaries (sets PLAYWRIGHT_BROWSERS_PATH)."
     required: false
@@ -28,99 +28,75 @@ outputs:
     description: "The installed Playwright version (x.y.z)."
     value: ${{ steps.detect-version.outputs.version }}
   installed-browsers:
-    description: "Space-separated list of browsers that were installed."
-    value: ${{ steps.install.outputs.installed_browsers }}
+    description: "JSON array string of the browsers that were installed."
+    value: ${{ steps.args.outputs.json }}
 
 runs:
   using: "composite"
   steps:
-    - name: Parse and validate browsers
-      id: validate
+    - name: Resolve browsers and basic validation
+      id: args
       shell: bash
       env:
+        INPUT_BROWSERS: ${{ inputs.browsers }}
         RUNNER_OS: ${{ runner.os }}
-        INPUT_BROWSERS_RAW: ${{ inputs.browsers }}
       run: |
         set -euo pipefail
-        RAW="$INPUT_BROWSERS_RAW"
+        node - <<'NODE'
+        const fs = require('fs');
+        const out = process.env.GITHUB_OUTPUT;
+        const raw = process.env.INPUT_BROWSERS || '["chrome"]';
+        const os = process.env.RUNNER_OS || '';
+        let cli, json;
 
-        # Try to decode JSON arrays first (allows workflows to pass lists directly)
-        if command -v python3 >/dev/null 2>&1; then
-          JSON_NORMALIZED=$(python3 -c $'import json, os\nraw = os.environ.get("INPUT_BROWSERS_RAW", "")\ntry:\n    data = json.loads(raw)\nexcept Exception:\n    data = None\nif isinstance(data, (list, tuple)):\n    tokens = [str(item) for item in data if str(item).strip()]\n    print(" ".join(tokens))' 2>/dev/null || true)
-          if [ -n "$JSON_NORMALIZED" ]; then
-            RAW="$JSON_NORMALIZED"
-          fi
-        fi
+        if (raw.trim().toLowerCase() === 'all') {
+          cli = 'all';
+          json = '["chromium","firefox","webkit"]';
+        } else {
+          let arr;
+          try { arr = JSON.parse(raw); } catch {
+            console.error('Input "browsers" must be a JSON array like ["chrome","firefox"] or the string "all".');
+            process.exit(1);
+          }
+          if (!Array.isArray(arr) || arr.length === 0) {
+            console.error('Input "browsers" must be a non-empty JSON array, or "all".');
+            process.exit(1);
+          }
+          const allowed = new Set(['chrome','chromium','firefox','webkit','msedge']);
+          const dedup = [];
+          for (const v of arr.map(s => String(s).trim().toLowerCase()).filter(Boolean)) {
+            if (!allowed.has(v)) {
+              console.error(`Invalid browser "${v}". Allowed: ${Array.from(allowed).join(', ')}, or "all".`);
+              process.exit(1);
+            }
+            if (v === 'msedge' && os !== 'Windows') {
+              console.error(`"msedge" can only be installed on Windows runners (current: ${os}).`);
+              process.exit(1);
+            }
+            if (!dedup.includes(v)) dedup.push(v);
+          }
+          cli = dedup.join(' ');
+          json = JSON.stringify(dedup);
+        }
+        fs.appendFileSync(out, `cli=${cli}\njson=${json}\n`);
+        NODE
 
-        # Normalize separators: commas, semicolons, CRs, and newlines -> spaces (after JSON handling)
-        RAW=$(printf '%s\n' "$RAW" | tr '\r' ' ' | tr ',;\n' ' ')
-
-        # Allowed values (lowercase only)
-        ALLOWED="chrome chromium firefox webkit msedge all"
-
-        # Collect, lowercase, and dedupe tokens
-        TOKENS=$(printf '%s\n' "$RAW" | tr '[:upper:]' '[:lower:]' | xargs -n1 | sort -u | xargs)
-
-        # Default if empty (matches input default)
-        if [ -z "$TOKENS" ]; then
-          TOKENS="chrome"
-        fi
-
-        # Validate
-        INVALID=""
-        for t in $TOKENS; do
-          case " $ALLOWED " in
-            *" $t "*) : ;;
-            *) INVALID="$INVALID $t" ;;
-          esac
-        done
-
-        INVALID_TRIMMED=$(printf '%s\n' "$INVALID" | xargs)
-        if [ -n "$INVALID_TRIMMED" ]; then
-          echo "::error::Invalid browsers:$INVALID_TRIMMED. Allowed: $ALLOWED"
-          echo "Requested: $TOKENS"
-          exit 1
-        fi
-
-        if echo " $TOKENS " | grep -q " msedge " && [ "${RUNNER_OS}" != "Windows" ]; then
-          echo "::error::'msedge' can only be installed on Windows runners (current: ${RUNNER_OS})."
-          exit 1
-        fi
-
-        # If 'all' is present with others, prefer 'all' and warn
-        COUNT=$(printf '%s\n' "$TOKENS" | wc -w | tr -d ' ')
-        if echo " $TOKENS " | grep -q " all " && [ "$COUNT" -gt 1 ]; then
-          echo "::warning::'all' specified together with other values ($TOKENS). Proceeding with 'all' only."
-          TOKENS="all"
-        fi
-
-        echo "normalized=$TOKENS" >> "$GITHUB_OUTPUT"
-        echo "Normalized and validated browsers: $TOKENS"
-
-    - name: Compute install flags
+    - name: Compute --with-deps (tiny)
       id: flags
       shell: bash
       env:
         RAW_WITH_DEPS: ${{ inputs.with-deps }}
+        RUNNER_OS: ${{ runner.os }}
       run: |
         set -euo pipefail
-        RAW="$RAW_WITH_DEPS"
-        VALUE=$(printf '%s' "$RAW" | tr '\r' ' ' | tr '[:upper:]' '[:lower:]' | xargs)
-        case "$VALUE" in
-          true|false|auto) : ;;
-          *)
-            echo "::error::Invalid with-deps value '$RAW'. Allowed: true, false, auto."
-            exit 1
-            ;;
-        esac
-        WITH_DEPS=""
-        if [ "$VALUE" = "true" ] || { [ "$VALUE" = "auto" ] && [ "${{ runner.os }}" = "Linux" ]; }; then
-          WITH_DEPS="--with-deps"
-        fi
-        echo "with_deps=$WITH_DEPS" >> "$GITHUB_OUTPUT"
+        v=$(printf '%s' "$RAW_WITH_DEPS" | tr '[:upper:]' '[:lower:]' | xargs)
+        [ "$v" = "true" ] || [ "$v" = "false" ] || [ "$v" = "auto" ] || { echo "::error::with-deps must be true, false, or auto"; exit 1; }
+        [ "$v" = "true" ] && echo "with_deps=--with-deps" >> "$GITHUB_OUTPUT" && exit 0
+        [ "$v" = "auto" ] && [ "$RUNNER_OS" = "Linux" ] && echo "with_deps=--with-deps" >> "$GITHUB_OUTPUT" && exit 0
+        echo "with_deps=" >> "$GITHUB_OUTPUT"
 
     - name: Configure browsers path (optional)
-      if: inputs.browsers-path != ''
+      if: ${{ inputs.browsers-path != '' }}
       shell: bash
       run: echo "PLAYWRIGHT_BROWSERS_PATH=${{ inputs.browsers-path }}" >> "$GITHUB_ENV"
 
@@ -130,43 +106,36 @@ runs:
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       run: |
         set -euo pipefail
-        if [ "${{ inputs.playwright-version }}" = "latest" ]; then
-          PKG="playwright@latest"
-        else
-          PKG="playwright@${{ inputs.playwright-version }}"
-        fi
-        echo "Installing $PKG globally (browsers download skipped)..."
-        npm i -g --no-audit --no-fund "$PKG"
+        PKG="playwright@${{ inputs.playwright-version == 'latest' && 'latest' || inputs.playwright-version }}"
+        echo "Installing $PKG globally (skip browser download)..."
+        npm i -g --no-audit --no-fund "$PKG" >/dev/null
         npm bin -g
 
-    - name: Install selected browsers
-      id: install
+    - name: Install browsers
       shell: bash
+      env:
+        CLI: ${{ steps.args.outputs.cli }}
+        WITH_DEPS: ${{ steps.flags.outputs.with_deps }}
       run: |
         set -euo pipefail
-        BROWSERS="${{ steps.validate.outputs.normalized }}"
-        if [ "$BROWSERS" = "all" ]; then
-          echo "Installing all browsers..."
+        if [ "$CLI" = "all" ]; then
+          echo "Installing all default Playwright browsers (chromium, firefox, webkit)..."
           set -x
-          playwright install ${{ steps.flags.outputs.with_deps }}
+          playwright install $WITH_DEPS
           set +x
-          INSTALLED="all"
         else
-          echo "Installing selected browsers: $BROWSERS"
+          echo "Installing: $CLI"
           set -x
           # shellcheck disable=SC2086
-          playwright install ${{ steps.flags.outputs.with_deps }} $BROWSERS
+          playwright install $WITH_DEPS $CLI
           set +x
-          INSTALLED="$BROWSERS"
         fi
-        echo "installed_browsers=$INSTALLED" >> "$GITHUB_OUTPUT"
 
     - name: Detect Playwright version
       id: detect-version
       shell: bash
       run: |
         set -euo pipefail
-        V=$(playwright --version | awk '{print $2}' || node -e 'console.log(require("playwright/package.json").version)' 2>/dev/null)
-        V=${V:-unknown}
-        echo "Playwright version detected: $V"
-        echo "version=$V" >> "$GITHUB_OUTPUT"
+        V=$(playwright --version 2>/dev/null | awk '{print $2}')
+        [ -n "$V" ] || V=$(node -e 'try{console.log(require("playwright/package.json").version)}catch{}' || true)
+        echo "version=${V:-unknown}" >> "$GITHUB_OUTPUT"
