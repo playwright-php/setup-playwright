@@ -1,0 +1,128 @@
+name: CI - Action tests
+on:
+  push:
+    branches:
+      - main
+      - "releases/*"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  matrix-smoke:
+    name: Smoke (${{ matrix.os }} · {{ matrix.browser }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        browser: [chrome, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use local action to install Playwright + selected browser
+        id: setup
+        uses: ./
+        with:
+          browsers: ${{ matrix.browser }}
+          with-deps: auto
+
+      - name: Verify CLI and installed version
+        shell: bash
+        run: |
+          set -euo pipefail
+          playwright --version
+          echo "Action reported version: ${{ steps.setup.outputs['playwright-version'] }}"
+          echo "Installed browsers: ${{ steps.setup.outputs['installed-browsers'] }}"
+
+      - name: Install local Playwright package (without re-downloading browsers)
+        shell: bash
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          set -euo pipefail
+          V="${{ steps.setup.outputs['playwright-version'] }}"
+          if [ -z "$V" ] || [ "$V" = "unknown" ]; then
+            V="latest"
+          fi
+          npm init -y >/dev/null 2>&1 || true
+          npm i -D --no-fund --no-audit "playwright@$V"
+          node -e "console.log('Local playwright version:', require('playwright/package.json').version)"
+
+      - name: Smoke run - Launch ${{ matrix.browser }} headless and fetch title
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > smoke.js <<'JS'
+          const {chromium, firefox, webkit} = require('playwright');
+          const target = process.env.BROWSER;
+          (async () => {
+            let browser;
+            if (target === 'chrome') {
+              browser = await chromium.launch({channel: 'chrome', headless: true});
+            } else if (target === 'firefox') {
+              browser = await firefox.launch({headless: true});
+            } else if (target === 'webkit') {
+              browser = await webkit.launch({headless: true});
+            } else if (target === 'chromium') {
+              browser = await chromium.launch({headless: true});
+            } else if (target === 'msedge') {
+              browser = await chromium.launch({channel: 'msedge', headless: true});
+            } else {
+              throw new Error('Unsupported BROWSER: ' + target);
+            }
+            const page = await browser.newPage();
+            await page.goto('https://example.com');
+            const title = await page.title();
+            console.log('TITLE=' + title);
+            await browser.close();
+          })().catch(err => {
+            console.error(err);
+            process.exit(1);
+          });
+          JS
+          node smoke.js
+        env:
+          BROWSER: ${{ matrix.browser }}
+
+  edge-windows:
+    name: Edge smoke (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          browsers: msedge
+      - name: Launch msedge
+        shell: bash
+        run: |
+          node -e "const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({channel:'msedge',headless:true});const p=await b.newPage();await p.goto('https://example.com');console.log(await p.title());await b.close()})()"
+
+  chromium-linux:
+    name: Chromium smoke (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          browsers: chromium
+          with-deps: true
+      - name: Launch chromium
+        shell: bash
+        run: |
+          node -e "const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({headless:true});const p=await b.newPage();await p.goto('https://example.com');console.log(await p.title());await b.close()})()"
+
+  invalid-input:
+    name: Invalid input should fail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: bad
+        uses: ./
+        with:
+          browsers: safari
+        continue-on-error: true
+      - name: Assert action failed on invalid value
+        if: always()
+        run: |
+          echo "Step outcome: ${{ steps.bad.outcome }}"
+          test "${{ steps.bad.outcome }}" = "failure"
