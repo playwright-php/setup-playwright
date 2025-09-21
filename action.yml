@@ -11,9 +11,9 @@ inputs:
     required: false
     default: "latest"
   browsers:
-    description: 'Browsers to install as a JSON array (e.g., ["chrome","firefox"]) or "all". Allowed: chrome, chromium, firefox, webkit, msedge.'
+    description: 'Browsers as a JSON array (["chrome","firefox"]), "all", or a single string like "chrome". Allowed: chrome, chromium, firefox, webkit, msedge.'
     required: false
-    default: '["chrome"]'
+    default: "chrome"
   browsers-path:
     description: "Optional custom directory to store browser binaries (sets PLAYWRIGHT_BROWSERS_PATH)."
     required: false
@@ -45,39 +45,52 @@ runs:
         node - <<'NODE'
         const fs = require('fs');
         const out = process.env.GITHUB_OUTPUT;
-        const raw = process.env.INPUT_BROWSERS || '["chrome"]';
+        const raw = (process.env.INPUT_BROWSERS ?? 'chrome').trim();
         const os = process.env.RUNNER_OS || '';
-        let cli, json;
+        const allowed = new Set(['chrome','chromium','firefox','webkit','msedge']);
 
-        if (raw.trim().toLowerCase() === 'all') {
-          cli = 'all';
-          json = '["chromium","firefox","webkit"]';
-        } else {
-          let arr;
-          try { arr = JSON.parse(raw); } catch {
-            console.error('Input "browsers" must be a JSON array like ["chrome","firefox"] or the string "all".');
-            process.exit(1);
-          }
-          if (!Array.isArray(arr) || arr.length === 0) {
-            console.error('Input "browsers" must be a non-empty JSON array, or "all".');
-            process.exit(1);
-          }
-          const allowed = new Set(['chrome','chromium','firefox','webkit','msedge']);
-          const dedup = [];
-          for (const v of arr.map(s => String(s).trim().toLowerCase()).filter(Boolean)) {
-            if (!allowed.has(v)) {
-              console.error(`Invalid browser "${v}". Allowed: ${Array.from(allowed).join(', ')}, or "all".`);
-              process.exit(1);
-            }
-            if (v === 'msedge' && os !== 'Windows') {
-              console.error(`"msedge" can only be installed on Windows runners (current: ${os}).`);
-              process.exit(1);
-            }
-            if (!dedup.includes(v)) dedup.push(v);
-          }
-          cli = dedup.join(' ');
-          json = JSON.stringify(dedup);
+        // "all" shortcut
+        if (raw.toLowerCase() === 'all') {
+          fs.appendFileSync(out, 'cli=all\njson=["chromium","firefox","webkit"]\n');
+          process.exit(0);
         }
+
+        // Try JSON first
+        let arr;
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            arr = parsed;
+          } else if (typeof parsed === 'string') {
+            // Allow a single string JSON, e.g. "chrome"
+            arr = [parsed];
+          } else {
+            throw new Error();
+          }
+        } catch {
+          // Fall back to treating raw as a single browser token
+          arr = [raw];
+        }
+
+        const norm = [];
+        for (const v of arr.map(x => String(x).trim().toLowerCase()).filter(Boolean)) {
+          if (!allowed.has(v)) {
+            console.error(`Invalid browser "${v}". Allowed: ${Array.from(allowed).join(', ')}, or "all".`);
+            process.exit(1);
+          }
+          if (v === 'msedge' && os !== 'Windows') {
+            console.error(`"msedge" can only be installed on Windows runners (current: ${os}).`);
+            process.exit(1);
+          }
+          if (!norm.includes(v)) norm.push(v);
+        }
+        if (norm.length === 0) {
+          console.error('At least one browser must be specified.');
+          process.exit(1);
+        }
+
+        const cli = norm.join(' ');
+        const json = JSON.stringify(norm);
         fs.appendFileSync(out, `cli=${cli}\njson=${json}\n`);
         NODE
 
@@ -91,9 +104,11 @@ runs:
         set -euo pipefail
         v=$(printf '%s' "$RAW_WITH_DEPS" | tr '[:upper:]' '[:lower:]' | xargs)
         [ "$v" = "true" ] || [ "$v" = "false" ] || [ "$v" = "auto" ] || { echo "::error::with-deps must be true, false, or auto"; exit 1; }
-        [ "$v" = "true" ] && echo "with_deps=--with-deps" >> "$GITHUB_OUTPUT" && exit 0
-        [ "$v" = "auto" ] && [ "$RUNNER_OS" = "Linux" ] && echo "with_deps=--with-deps" >> "$GITHUB_OUTPUT" && exit 0
-        echo "with_deps=" >> "$GITHUB_OUTPUT"
+        if [ "$v" = "true" ] || { [ "$v" = "auto" ] && [ "$RUNNER_OS" = "Linux" ]; }; then
+          echo "with_deps=--with-deps" >> "$GITHUB_OUTPUT"
+        else
+          echo "with_deps=" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Configure browsers path (optional)
       if: ${{ inputs.browsers-path != '' }}
@@ -106,7 +121,11 @@ runs:
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       run: |
         set -euo pipefail
-        PKG="playwright@${{ inputs.playwright-version == 'latest' && 'latest' || inputs.playwright-version }}"
+        if [ "${{ inputs.playwright-version }}" = "latest" ]; then
+          PKG="playwright@latest"
+        else
+          PKG="playwright@${{ inputs.playwright-version }}"
+        fi
         echo "Installing $PKG globally (skip browser download)..."
         npm i -g --no-audit --no-fund "$PKG" >/dev/null
         npm bin -g
