@@ -127,9 +127,8 @@ runs:
           PKG="playwright@${{ inputs.playwright-version }}"
         fi
         echo "Installing $PKG globally (skip browser download)..."
-        npm i -g --no-audit --no-fund "$PKG" >/dev/null
-        npm bin -g
-
+        npm i -g --no-audit --no-fund "$PKG"
+        command -v playwright || true
     - name: Install browsers
       shell: bash
       env:
