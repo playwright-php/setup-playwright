@@ -46,16 +46,7 @@ runs:
 
         # Try to decode JSON arrays first (allows workflows to pass lists directly)
         if command -v python3 >/dev/null 2>&1; then
-          JSON_NORMALIZED=$(python3 -c "import json, os
-raw = os.environ.get('INPUT_BROWSERS_RAW', '')
-try:
-    data = json.loads(raw)
-except Exception:
-    data = None
-
-if isinstance(data, (list, tuple)):
-    tokens = [str(item) for item in data if str(item).strip()]
-    print(' '.join(tokens))" 2>/dev/null || true)
+          JSON_NORMALIZED=$(python3 -c $'import json, os\nraw = os.environ.get("INPUT_BROWSERS_RAW", "")\ntry:\n    data = json.loads(raw)\nexcept Exception:\n    data = None\nif isinstance(data, (list, tuple)):\n    tokens = [str(item) for item in data if str(item).strip()]\n    print(" ".join(tokens))' 2>/dev/null || true)
           if [ -n "$JSON_NORMALIZED" ]; then
             RAW="$JSON_NORMALIZED"
           fi
