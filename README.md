@@ -10,7 +10,7 @@
 # Setup Playwright (for PHP)
 
 Sets up the runner for [Playwright for PHP](https://playwright-php.dev):
-- install `@playwright` JS library globally
+- install Playwright library globally
 - download the browser binaries (default: Chrome)
 
 ## Usage
@@ -36,6 +36,36 @@ jobs:
       - run: vendor/bin/phpunit
 ```
 
+## Examples
+
+### Install multiple browsers
+```yaml
+- uses: playwright-php/setup-playwright@v1
+  with:
+    browsers: '["chromium","firefox"]'
+```
+
+### Reuse cached browser downloads
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: ~/.cache/ms-playwright
+    key: browsers-${{ runner.os }}
+
+- uses: playwright-php/setup-playwright@v1
+  with:
+    browsers-path: ~/.cache/ms-playwright
+```
+
+### Pin the Playwright CLI version and skip deps
+```yaml
+- uses: playwright-php/setup-playwright@v1
+  with:
+    playwright-version: '1.48.2'
+    browsers: webkit
+    with-deps: false
+```
+
 ## Outputs
 
 The action exposes two outputs:
@@ -51,6 +81,12 @@ The action exposes two outputs:
 | `playwright-version` | `latest` | Any valid npm specifier (for the `playwright` package)     | Leave `latest` to track upstream.                                                                                                                                        |
 | `with-deps`          | `auto`   | `true`, `false`, `auto`                                    | `auto` appends Playwright's `--with-deps` flag on Linux runners.                                                                                                         |
 | `browsers-path`      |          | Directory path                                             | Exports `PLAYWRIGHT_BROWSERS_PATH` so downloads land in your cache. Leave blank for Playwright defaults (`~/.cache/ms-playwright`, `%LOCALAPPDATA%\ms-playwright`, etc.) |
+
+## Testing the action
+
+1. Trigger `.github/workflows/test.yml` via `workflow_dispatch` to exercise the action on hosted runners.
+2. Run the same workflow with [`act`](https://github.com/nektos/act) to catch issues locally before pushing.
+3. In a scratch repo, reference the action with `uses: ./` so every commit is validated before tagging a Marketplace release.
 
 ## License
 
