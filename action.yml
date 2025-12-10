@@ -129,6 +129,20 @@ runs:
         echo "Installing $PKG globally (skip browser download)..."
         npm i -g --no-audit --no-fund "$PKG"
         command -v playwright || true
+        GLOBAL_NODE_ROOT=$(npm root -g | tr -d '\r')
+        OS="${RUNNER_OS:-}"
+        if [ "$OS" = "Windows" ] && command -v cygpath >/dev/null 2>&1; then
+          GLOBAL_NODE_ROOT=$(cygpath -m "$GLOBAL_NODE_ROOT")
+        fi
+        SEP=':'
+        if [ "$OS" = "Windows" ]; then
+          SEP=';'
+        fi
+        if [ -n "${NODE_PATH:-}" ]; then
+          echo "NODE_PATH=${GLOBAL_NODE_ROOT}${SEP}${NODE_PATH}" >> "$GITHUB_ENV"
+        else
+          echo "NODE_PATH=${GLOBAL_NODE_ROOT}" >> "$GITHUB_ENV"
+        fi
     - name: Install browsers
       shell: bash
       env:
