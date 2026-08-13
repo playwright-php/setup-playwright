@@ -7,7 +7,7 @@
 
 </div>
 
-# Setup Playwright (for PHP)
+# Playwright PHP Setup Action
 
 Install the Playwright npm package and browser binaries for a
 [Playwright PHP](https://playwright-php.dev) GitHub Actions workflow.
@@ -135,11 +135,11 @@ The action version and the `playwright-version` input are independent: the
 first selects the action code, the second selects the npm package and browser
 binaries the action installs.
 
-## Testing the action
+## Contributing
 
-1. Trigger `.github/workflows/test.yml` via `workflow_dispatch` to exercise the action on hosted runners.
-2. Run the same workflow with [`act`](https://github.com/nektos/act) to catch issues locally before pushing.
-3. In a scratch repo, reference the action with `uses: ./` so every commit is validated before tagging a Marketplace release.
+The action is validated by `.github/workflows/test.yml` on Linux, macOS, and
+Windows. Trigger that workflow with `workflow_dispatch`, or run it with
+[`act`](https://github.com/nektos/act) for a local Linux check.
 
 ## License
 
