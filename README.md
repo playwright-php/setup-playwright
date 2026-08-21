@@ -109,6 +109,25 @@ key. Browser binaries are tied to their Playwright release.
 `with-deps: auto` installs browser system dependencies on Linux and skips that
 step on macOS and Windows. Use `true` or `false` to override this behavior.
 
+Whether skipping is safe depends entirely on the browser. On a `ubuntu-latest`
+runner, `--with-deps` installs:
+
+| Browser              | Packages installed | What they are                                                                              |
+|----------------------|--------------------|--------------------------------------------------------------------------------------------|
+| `chrome`, `chromium` | 9                  | fonts only — every library is already on the image                                          |
+| `firefox`            | 40                 | fonts plus codecs (`libavcodec60`, `libopus0`, `libdav1d7`, `libmp3lame0`, `libtheora0`, …) |
+| `webkit`             | 181                | fonts plus `glib-networking` and the full GStreamer stack                                   |
+
+So `with-deps: false` is cheap and safe for a **chromium-only** suite: it saves
+around 12s per job and the only thing you give up are fonts for non-Latin text,
+which matters solely if your tests render CJK/Cyrillic/Thai content or take
+screenshots. Do not skip it for `firefox` or `webkit` — those are real runtime
+libraries and the browser will fail to launch without them.
+
+These counts come from GitHub-hosted runner images. Self-hosted runners and
+container jobs generally need `--with-deps` for every browser, including
+chromium.
+
 ## Outputs
 
 The action exposes two outputs:
@@ -122,7 +141,7 @@ The action exposes two outputs:
 |----------------------|----------|------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `browsers`           | `chrome` | `chrome`, `chromium`, `firefox`, `webkit`, `msedge`, `all` | `msedge` only on Windows runners                                                                                                                                         |
 | `playwright-version` | `latest` | Any valid npm specifier (for the `playwright` package)     | Pin an exact version for reproducible CI. Use `latest` only when intentionally testing new upstream releases.                                                            |
-| `with-deps`          | `auto`   | `true`, `false`, `auto`                                    | `auto` appends Playwright's `--with-deps` flag on Linux runners.                                                                                                         |
+| `with-deps`          | `auto`   | `true`, `false`, `auto`                                    | `auto` appends Playwright's `--with-deps` flag on Linux runners. Safe to set `false` for a chromium-only suite; see above.                                               |
 | `browsers-path`      |          | Directory path                                             | Exports `PLAYWRIGHT_BROWSERS_PATH` so downloads land in your cache. Leave blank for Playwright defaults (`~/.cache/ms-playwright`, `%LOCALAPPDATA%\ms-playwright`, etc.) |
 
 ## Action version
